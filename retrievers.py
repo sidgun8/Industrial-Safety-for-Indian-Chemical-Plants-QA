@@ -1,48 +1,56 @@
-from langchain_community.embeddings import HuggingFaceEmbeddings
+import os
+import torch
+from sentence_transformers import SentenceTransformer
 from langchain_community.vectorstores import Chroma
-from langchain_community.retrievers import BM25Retriever
-import os, pickle
-from rrf import reciprocal_rank_fusion
+from langchain.embeddings.base import Embeddings
+from langchain.text_splitter import RecursiveCharacterTextSplitter
 
 CHROMA_DIR = "chroma_db"
-BM25_FILE = "bm25.pkl"
 
-class HybridRetriever:
-    """Combines BM25 + Dense Vector retrievers using RRF with caching."""
+class BGEEmbeddingWrapper(Embeddings):
+    """Wrapper for BGE embeddings compatible with LangChain/Chroma."""
 
-    def __init__(self, docs, k_dense: int = 5, bge_model: str = "BAAI/bge-large-en"):
-        self.k_dense = k_dense
+    def __init__(self, model_name="BAAI/bge-small-en-v1.5", device="cpu"):
+        print(f"Loading embedding model {model_name}...")
+        self.device = device
+        self.model = SentenceTransformer(model_name, device="cpu")
 
-        # ---------- Embedding function ----------
-        self.embeddings = HuggingFaceEmbeddings(model_name=bge_model, model_kwargs={"device": "cpu"})
+        # Optional MPS fallback
+        if device == "mps" and torch.backends.mps.is_available():
+            try:
+                self.model = self.model.to("mps")
+                print("✅ Using MPS acceleration")
+            except Exception as e:
+                print("⚠️ MPS failed, falling back to CPU:", e)
+                self.model = self.model.to("cpu")
 
-        # ---------- Chroma vector store ----------
-        if os.path.exists(CHROMA_DIR):
-            print("[HybridRetriever] Loading persisted Chroma DB...")
-            self.vectordb = Chroma(
-                persist_directory=CHROMA_DIR,
-                embedding_function=self.embeddings  # ✅ provide embedding
-            )
-        else:
-            print("[HybridRetriever] Creating new Chroma DB...")
-            self.vectordb = Chroma.from_documents(
-                docs, self.embeddings, persist_directory=CHROMA_DIR
-            )
-            self.vectordb.persist()
+    def embed_documents(self, texts):
+        return [emb.tolist() for emb in self.model.encode(texts, convert_to_numpy=True)]
 
-        # ---------- BM25 Retriever ----------
-        if os.path.exists(BM25_FILE):
-            print("[HybridRetriever] Loading persisted BM25 index...")
-            with open(BM25_FILE, "rb") as f:
-                self.bm25 = pickle.load(f)
-        else:
-            print("[HybridRetriever] Creating new BM25 index...")
-            self.bm25 = BM25Retriever.from_documents(docs, k=5)
-            with open(BM25_FILE, "wb") as f:
-                pickle.dump(self.bm25, f)
+    def embed_query(self, query):
+        return self.model.encode([query], convert_to_numpy=True)[0].tolist()
 
-    def get_relevant_documents(self, query: str):
-        bm25_docs = self.bm25.get_relevant_documents(query)
-        vector_docs = self.vectordb.similarity_search(query, k=self.k_dense)
-        fused = reciprocal_rank_fusion([bm25_docs, vector_docs], k=60, top_n=5)
-        return [doc for doc, _ in fused]
+
+class ChromaRetriever:
+    """Chroma vector store retriever."""
+
+    def __init__(self, docs, persist_directory=CHROMA_DIR, device="cpu", force_reindex=False):
+        self.embedding_fn = BGEEmbeddingWrapper(device=device)
+
+        # Ensure directory exists
+        os.makedirs(persist_directory, exist_ok=True)
+
+        # If forcing reindex or DB is missing, clear old DB
+        if force_reindex and os.path.exists(persist_directory):
+            import shutil
+            shutil.rmtree(persist_directory)
+            os.makedirs(persist_directory, exist_ok=True)
+            print("[ChromaRetriever] Cleared existing Chroma DB")
+
+        # Create Chroma vector store
+        self.vectordb = Chroma.from_documents(
+            docs, self.embedding_fn, persist_directory=persist_directory
+        )
+
+    def get_relevant_documents(self, query, k=5):
+        return self.vectordb.similarity_search(query, k=k)

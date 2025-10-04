@@ -1,46 +1,49 @@
-'''
-from loaders import extract_docs
-from retrievers import HybridRetriever
+from retrievers import ChromaRetriever
 from llm import answer_with_llama
-
-PDF_FOLDER = "/Users/siddharthsrinivasan/Desktop/RAG_ChemE_Safety/Safety_manuals"
-
-if __name__ == "__main__":
-    docs = extract_docs(PDF_FOLDER)
-    hybrid_retriever = HybridRetriever(docs)
-    
-    query = "How to be safe in a chemical plant?"
-    answer = answer_with_llama(query, hybrid_retriever, show_chunks=True)
-    
-    print("\n==== Final Answer ====\n", answer)
-'''
-
-# main.py
 from loaders import extract_docs
-from retrievers import HybridRetriever
-from llm import answer_with_llama
 import os
 
 PDF_FOLDER = os.path.join(os.path.dirname(__file__), "Safety_manuals")
+CHROMA_DIR = os.path.join(os.path.dirname(__file__), "chroma_db")
 
-# Global retriever (to avoid rebuilding each query)
-hybrid_retriever = None
+# Global retriever variable
+chroma_retriever = None
 
-def ingest():
-    """Load documents and build retriever."""
-    global hybrid_retriever
+def ingest(force_reindex=False):
+    """Load documents and build Chroma retriever."""
+    global chroma_retriever
     docs = extract_docs(PDF_FOLDER)
-    hybrid_retriever = HybridRetriever(docs)
-    return hybrid_retriever
+    chroma_retriever = ChromaRetriever(docs, persist_directory=CHROMA_DIR, force_reindex=force_reindex)
+    return chroma_retriever
 
-def query_rag(query: str, show_chunks: bool = False):
-    """Ask a question with RAG pipeline."""
-    global hybrid_retriever
-    if hybrid_retriever is None:
-        ingest()  # lazy load if not already ingested
-    return answer_with_llama(query, hybrid_retriever, show_chunks=show_chunks)
+def query_rag(query, show_chunks=False, k=5):
+    """Query the RAG pipeline and generate final answer."""
+    global chroma_retriever
+    if chroma_retriever is None:
+        ingest()
 
-if __name__ == "__main__":
-    q = "How to be safe in a chemical plant?"
-    ans = query_rag(q, show_chunks=True)
-    print("\n==== Final Answer ====\n", ans)
+    results = chroma_retriever.get_relevant_documents(query, k=k)
+
+    if show_chunks:
+        print("\n==== Retrieved Chunks ====\n")
+        for i, d in enumerate(results, 1):
+            print(f"{i}. [{d.metadata.get('source','unknown')}]")
+            print(d.page_content[:500] + ("..." if len(d.page_content) > 500 else ""))
+            print()
+
+    context = "\n\n---\n\n".join(
+        f"[{d.metadata.get('source','unknown')}] {d.page_content}" for d in results
+    )
+
+    prompt = f"""
+You are a strict assistant that answers ONLY using the provided documents.
+
+Question: {query}
+
+Context:
+{context}
+
+Answer:"""
+
+    answer = answer_with_llama(prompt)
+    return answer
