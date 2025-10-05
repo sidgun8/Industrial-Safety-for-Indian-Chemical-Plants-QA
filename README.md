@@ -16,16 +16,19 @@ Pure embedding-based retrieval using state-of-the-art sentence transformers.
 We have also experimented with AWS Bedrock for managed LLM and embedding endpoints.
 
 🚀 Strategies Implemented
+
 1️⃣ Hybrid Retrieval: BM25 + ChromaDB (with BGLatch embeddings)
 Combines lexical search (BM25) with semantic embeddings (ChromaDB).
 Embeddings powered by BGLatch.
 Useful when exact keyword matches are important but semantic similarity adds context.
 Provides strong recall + precision balance.
+
 2️⃣ Multilingual Hybrid RAG
 Extends the hybrid approach by handling multilingual queries.
 Detects language using ASCII heuristics (fast + lightweight).
 Non-English queries → translated → passed into the retriever.
 Ensures better performance across code-mixed or non-English corpora.
+
 3️⃣ Pure Embedding Retrieval (BAAI BGE v1.5)
 Removes BM25 and relies purely on vector embeddings.
 Uses BAAI BGE v1.5 for high-quality dense representations.
