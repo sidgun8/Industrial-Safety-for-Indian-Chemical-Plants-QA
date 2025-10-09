@@ -34,7 +34,7 @@ Ensures better performance across code-mixed or non-English corpora.
 
 We maintain multiple branches to experiment with different RAG designs:
 
-- **main** — baseline or shared modules  
+- **main** — basic RAG for english with Hybrid Retrieval strategy
 - **Multilingual-RAG-BM25-Chroma** — hybrid retrieval combining BM25 + ChromaDB, plus ASCII-based multilingual support  
 - **multilingual-RAG-Baai/bge1.5-pureChroma** — pure embedding retrieval using BAAI BGE v1.5, with multilingual query translation
 
